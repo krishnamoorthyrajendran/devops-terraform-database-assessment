@@ -1,0 +1,114 @@
+name: Terraform CI/CD
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+
+permissions:
+  contents: read
+
+jobs:
+
+  # Job 1: Terraform Formatting
+
+  terraform-format:
+    name: Terraform Format
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive infra
+
+  # Job 2: Terraform Validate and Plan
+
+  terraform-plan:
+    name: Terraform Plan (${{ matrix.environment }})
+
+    needs: terraform-format
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        environment:
+          - dev
+          - prod
+
+    defaults:
+      run:
+        working-directory: infra/envs/${{ matrix.environment }}
+
+    env:
+      AWS_ACCESS_KEY_ID: testing
+      AWS_SECRET_ACCESS_KEY: testing
+      AWS_DEFAULT_REGION: ap-south-1
+      AWS_REGION: ap-south-1
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      # Initialize Terraform
+
+      - name: Terraform Init
+        run: terraform init -backend=false -input=false
+
+      # Validate Terraform
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      # Generate Terraform Plan
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -refresh=false \
+            -input=false \
+            -lock=false \
+            -var-file="${{ matrix.environment }}.tfvars" \
+            -out=tfplan
+
+      # Convert plan to readable text
+
+      - name: Generate Plan Report
+        run: terraform show -no-color tfplan > tfplan.txt
+
+      # Remove binary plan because it can contain sensitive values
+
+      - name: Remove Binary Plan
+        run: rm -f tfplan
+
+      # Upload Terraform Plan
+
+      - name: Upload Terraform Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ matrix.environment }}
+          path: infra/envs/${{ matrix.environment }}/tfplan.txt
+          retention-days: 5
